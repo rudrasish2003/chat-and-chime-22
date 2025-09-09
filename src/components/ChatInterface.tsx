@@ -1,10 +1,19 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Send, Mic, MicOff } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useToast } from "@/hooks/use-toast";
 import ChatAvatar from "./ChatAvatar";
+
+// TypeScript declarations for Speech APIs
+declare global {
+  interface Window {
+    SpeechRecognition: any;
+    webkitSpeechRecognition: any;
+  }
+}
 
 interface Message {
   id: string;
@@ -25,7 +34,69 @@ const ChatInterface = () => {
   const [inputValue, setInputValue] = useState("");
   const [isVoiceMode, setIsVoiceMode] = useState(false);
   const [isListening, setIsListening] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [recognitionActive, setRecognitionActive] = useState(false);
+  
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const recognitionRef = useRef<any>(null);
+  const speechSynthesisRef = useRef<SpeechSynthesisUtterance | null>(null);
+  const { toast } = useToast();
+
+  // Initialize speech recognition
+  useEffect(() => {
+    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+      const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+      recognitionRef.current = new SpeechRecognitionAPI();
+      
+      if (recognitionRef.current) {
+        recognitionRef.current.continuous = true;
+        recognitionRef.current.interimResults = false;
+        recognitionRef.current.lang = 'en-US';
+        
+        recognitionRef.current.onresult = (event) => {
+          const transcript = event.results[event.results.length - 1][0].transcript;
+          if (transcript.trim()) {
+            toast({
+              title: "Voice Input Detected",
+              description: `Heard: "${transcript}"`,
+            });
+            processMessage(transcript);
+          }
+        };
+
+        recognitionRef.current.onerror = (event) => {
+          console.error('Speech recognition error:', event.error);
+          setIsListening(false);
+          setRecognitionActive(false);
+          toast({
+            title: "Voice Recognition Error",
+            description: "Please try again",
+            variant: "destructive",
+          });
+        };
+
+        recognitionRef.current.onend = () => {
+          if (recognitionActive && isVoiceMode) {
+            // Restart recognition if still in voice mode
+            setTimeout(() => {
+              if (recognitionRef.current && recognitionActive && isVoiceMode) {
+                recognitionRef.current.start();
+              }
+            }, 100);
+          }
+        };
+      }
+    }
+
+    return () => {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
+      if (speechSynthesisRef.current) {
+        speechSynthesis.cancel();
+      }
+    };
+  }, []);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -35,12 +106,66 @@ const ChatInterface = () => {
     scrollToBottom();
   }, [messages]);
 
-  const handleSendMessage = () => {
-    if (!inputValue.trim()) return;
+  // Get AI response
+  const getAIResponse = async (userInput: string): Promise<string> => {
+    try {
+      // Simulate AI API call - replace with actual API
+      const responses = [
+        "That's a fascinating question! Let me help you with that.",
+        "I understand what you're asking. Here's what I think...",
+        "Great point! Based on my understanding, I'd suggest...",
+        "That's an interesting perspective. Let me elaborate on that topic.",
+        "I'm here to help! Here's my response to your question."
+      ];
+      
+      // Simulate thinking time
+      await new Promise(resolve => setTimeout(resolve, 1000 + Math.random() * 2000));
+      
+      return responses[Math.floor(Math.random() * responses.length)] + 
+             ` You mentioned: "${userInput}". This gives me a good understanding of what you're looking for.`;
+    } catch (error) {
+      console.error('Error getting AI response:', error);
+      return "I apologize, but I'm having trouble processing your request right now. Please try again.";
+    }
+  };
+
+  // Text-to-Speech function
+  const speakText = useCallback((text: string) => {
+    if ('speechSynthesis' in window) {
+      // Cancel any ongoing speech
+      speechSynthesis.cancel();
+      
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = 0.9;
+      utterance.pitch = 1.0;
+      utterance.volume = 1.0;
+
+      // Try to get a natural voice
+      const voices = speechSynthesis.getVoices();
+      const preferredVoice = voices.find(voice => 
+        voice.lang.startsWith('en') && voice.name.includes('Google')
+      ) || voices.find(voice => voice.lang.startsWith('en'));
+      
+      if (preferredVoice) {
+        utterance.voice = preferredVoice;
+      }
+
+      utterance.onstart = () => setIsSpeaking(true);
+      utterance.onend = () => setIsSpeaking(false);
+      utterance.onerror = () => setIsSpeaking(false);
+
+      speechSynthesisRef.current = utterance;
+      speechSynthesis.speak(utterance);
+    }
+  }, []);
+
+  // Process message (from text or voice)
+  const processMessage = async (messageText: string) => {
+    if (!messageText.trim()) return;
 
     const userMessage: Message = {
       id: Date.now().toString(),
-      content: inputValue,
+      content: messageText,
       isUser: true,
       timestamp: new Date(),
     };
@@ -48,16 +173,34 @@ const ChatInterface = () => {
     setMessages(prev => [...prev, userMessage]);
     setInputValue("");
 
-    // Simulate AI response
-    setTimeout(() => {
+    // Get AI response
+    try {
+      const aiResponseText = await getAIResponse(messageText);
       const aiResponse: Message = {
         id: (Date.now() + 1).toString(),
-        content: "That's a great question! As an AI assistant, I'm here to help you with a wide variety of tasks. What would you like to explore?",
+        content: aiResponseText,
         isUser: false,
         timestamp: new Date(),
       };
+      
       setMessages(prev => [...prev, aiResponse]);
-    }, 1000);
+      
+      // Speak the response if in voice mode
+      if (isVoiceMode) {
+        speakText(aiResponseText);
+      }
+    } catch (error) {
+      console.error('Error processing message:', error);
+      toast({
+        title: "Error",
+        description: "Failed to get AI response",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleSendMessage = () => {
+    processMessage(inputValue);
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -68,13 +211,48 @@ const ChatInterface = () => {
   };
 
   const toggleVoiceMode = () => {
-    setIsVoiceMode(!isVoiceMode);
-    if (!isVoiceMode) {
-      setIsListening(true);
-      // Simulate voice recognition
-      setTimeout(() => setIsListening(false), 3000);
+    const newVoiceMode = !isVoiceMode;
+    setIsVoiceMode(newVoiceMode);
+    
+    if (newVoiceMode) {
+      // Start voice recognition
+      if (recognitionRef.current) {
+        setRecognitionActive(true);
+        setIsListening(true);
+        try {
+          recognitionRef.current.start();
+          toast({
+            title: "Voice Mode Activated",
+            description: "Listening for your voice...",
+          });
+        } catch (error) {
+          console.error('Error starting voice recognition:', error);
+          setIsListening(false);
+          setRecognitionActive(false);
+        }
+      } else {
+        toast({
+          title: "Voice Not Supported",
+          description: "Your browser doesn't support voice recognition",
+          variant: "destructive",
+        });
+        setIsVoiceMode(false);
+      }
     } else {
+      // Stop voice recognition
+      setRecognitionActive(false);
       setIsListening(false);
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
+      if (speechSynthesisRef.current) {
+        speechSynthesis.cancel();
+        setIsSpeaking(false);
+      }
+      toast({
+        title: "Voice Mode Deactivated",
+        description: "Switched back to text mode",
+      });
     }
   };
 
@@ -165,7 +343,11 @@ const ChatInterface = () => {
           {/* Avatar Panel */}
           {isVoiceMode && (
             <div className="w-80 border-l border-border/50 p-6">
-              <ChatAvatar isListening={isListening} isVoiceMode={isVoiceMode} />
+              <ChatAvatar 
+                isListening={isListening} 
+                isVoiceMode={isVoiceMode} 
+                isSpeaking={isSpeaking}
+              />
             </div>
           )}
         </div>

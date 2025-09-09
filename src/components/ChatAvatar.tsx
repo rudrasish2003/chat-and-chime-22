@@ -4,13 +4,15 @@ import { cn } from "@/lib/utils";
 interface ChatAvatarProps {
   isListening: boolean;
   isVoiceMode: boolean;
+  isSpeaking?: boolean;
 }
 
-const ChatAvatar = ({ isListening, isVoiceMode }: ChatAvatarProps) => {
+const ChatAvatar = ({ isListening, isVoiceMode, isSpeaking = false }: ChatAvatarProps) => {
   const [pulseIntensity, setPulseIntensity] = useState(0);
+  const [mouthMovement, setMouthMovement] = useState(0);
 
   useEffect(() => {
-    if (isListening) {
+    if (isListening || isSpeaking) {
       const interval = setInterval(() => {
         setPulseIntensity(Math.random() * 100);
       }, 200);
@@ -18,7 +20,19 @@ const ChatAvatar = ({ isListening, isVoiceMode }: ChatAvatarProps) => {
     } else {
       setPulseIntensity(0);
     }
-  }, [isListening]);
+  }, [isListening, isSpeaking]);
+
+  // Mouth movement animation for speaking
+  useEffect(() => {
+    if (isSpeaking) {
+      const interval = setInterval(() => {
+        setMouthMovement(Math.random() * 40 + 10);
+      }, 150);
+      return () => clearInterval(interval);
+    } else {
+      setMouthMovement(0);
+    }
+  }, [isSpeaking]);
 
   return (
     <div className="flex flex-col items-center justify-center h-full">
@@ -72,10 +86,12 @@ const ChatAvatar = ({ isListening, isVoiceMode }: ChatAvatarProps) => {
               <div 
                 className={cn(
                   "w-8 h-4 border-2 border-background rounded-b-full transition-all duration-200",
-                  isListening && "animate-bounce"
+                  (isListening || isSpeaking) && "animate-bounce"
                 )}
                 style={{
-                  transform: isListening 
+                  transform: isSpeaking
+                    ? `scaleY(${0.3 + mouthMovement / 100}) scaleX(${1 + mouthMovement / 100})`
+                    : isListening 
                     ? `scaleY(${0.5 + pulseIntensity / 200})` 
                     : "scaleY(0.5)"
                 }}
@@ -109,16 +125,19 @@ const ChatAvatar = ({ isListening, isVoiceMode }: ChatAvatarProps) => {
           AI Assistant
         </h3>
         <p className="text-sm text-muted-foreground mt-1">
-          {isListening ? "Listening..." : "Ready to chat"}
+          {isSpeaking ? "Speaking..." : isListening ? "Listening..." : "Ready to chat"}
         </p>
         
         {/* Voice activity indicator */}
-        {isListening && (
+        {(isListening || isSpeaking) && (
           <div className="mt-4 flex justify-center space-x-1">
             {[...Array(3)].map((_, i) => (
               <div
                 key={i}
-                className="w-2 h-2 bg-ai-primary rounded-full animate-bounce"
+                className={cn(
+                  "w-2 h-2 rounded-full animate-bounce",
+                  isSpeaking ? "bg-ai-secondary" : "bg-ai-primary"
+                )}
                 style={{ animationDelay: `${i * 200}ms` }}
               />
             ))}
@@ -129,7 +148,9 @@ const ChatAvatar = ({ isListening, isVoiceMode }: ChatAvatarProps) => {
       {/* Instructions */}
       <div className="mt-8 p-4 bg-card/50 rounded-lg border border-border/50">
         <p className="text-xs text-muted-foreground text-center">
-          {isListening 
+          {isSpeaking 
+            ? "I'm responding to your message..."
+            : isListening 
             ? "Speak naturally - I'm listening to your voice"
             : "Click the microphone to start voice conversation"
           }
