@@ -57,6 +57,25 @@ export default {
           border: "hsl(var(--sidebar-border))",
           ring: "hsl(var(--sidebar-ring))",
         },
+        ai: {
+          primary: "hsl(var(--ai-primary))",
+          secondary: "hsl(var(--ai-secondary))",
+          accent: "hsl(var(--ai-accent))",
+        },
+      },
+      backgroundImage: {
+        "gradient-ai": "var(--gradient-ai)",
+        "gradient-chat": "var(--gradient-chat)",
+        "gradient-avatar": "var(--gradient-avatar)",
+      },
+      transitionTimingFunction: {
+        "smooth": "cubic-bezier(0.4, 0, 0.2, 1)",
+        "bounce": "cubic-bezier(0.68, -0.55, 0.265, 1.55)",
+      },
+      boxShadow: {
+        "ai": "var(--shadow-ai)",
+        "chat": "var(--shadow-chat)", 
+        "avatar": "var(--shadow-avatar)",
       },
       borderRadius: {
         lg: "var(--radius)",
