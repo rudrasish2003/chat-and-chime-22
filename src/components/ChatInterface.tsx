@@ -7,7 +7,6 @@ import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import ChatAvatar from "./ChatAvatar";
 
-// TypeScript declarations for Speech APIs
 declare global {
   interface Window {
     SpeechRecognition: any;
@@ -21,6 +20,8 @@ interface Message {
   isUser: boolean;
   timestamp: Date;
 }
+
+const API_URL = "http://127.0.0.1:8000";
 
 const ChatInterface = () => {
   const [messages, setMessages] = useState<Message[]>([
@@ -36,7 +37,7 @@ const ChatInterface = () => {
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [recognitionActive, setRecognitionActive] = useState(false);
-  
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
   const speechSynthesisRef = useRef<SpeechSynthesisUtterance | null>(null);
@@ -44,17 +45,18 @@ const ChatInterface = () => {
 
   // Initialize speech recognition
   useEffect(() => {
-    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
-      const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if ("webkitSpeechRecognition" in window || "SpeechRecognition" in window) {
+      const SpeechRecognitionAPI =
+        window.SpeechRecognition || window.webkitSpeechRecognition;
       recognitionRef.current = new SpeechRecognitionAPI();
-      
       if (recognitionRef.current) {
         recognitionRef.current.continuous = true;
         recognitionRef.current.interimResults = false;
-        recognitionRef.current.lang = 'en-US';
-        
-        recognitionRef.current.onresult = (event) => {
-          const transcript = event.results[event.results.length - 1][0].transcript;
+        recognitionRef.current.lang = "en-US";
+
+        recognitionRef.current.onresult = (event: any) => {
+          const transcript =
+            event.results[event.results.length - 1][0].transcript;
           if (transcript.trim()) {
             toast({
               title: "Voice Input Detected",
@@ -64,8 +66,8 @@ const ChatInterface = () => {
           }
         };
 
-        recognitionRef.current.onerror = (event) => {
-          console.error('Speech recognition error:', event.error);
+        recognitionRef.current.onerror = (event: any) => {
+          console.error("Speech recognition error:", event.error);
           setIsListening(false);
           setRecognitionActive(false);
           toast({
@@ -77,7 +79,6 @@ const ChatInterface = () => {
 
         recognitionRef.current.onend = () => {
           if (recognitionActive && isVoiceMode) {
-            // Restart recognition if still in voice mode
             setTimeout(() => {
               if (recognitionRef.current && recognitionActive && isVoiceMode) {
                 recognitionRef.current.start();
@@ -89,66 +90,49 @@ const ChatInterface = () => {
     }
 
     return () => {
-      if (recognitionRef.current) {
-        recognitionRef.current.stop();
-      }
-      if (speechSynthesisRef.current) {
-        speechSynthesis.cancel();
-      }
+      if (recognitionRef.current) recognitionRef.current.stop();
+      if (speechSynthesisRef.current) speechSynthesis.cancel();
     };
-  }, []);
+  }, [recognitionActive, isVoiceMode]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
+  useEffect(() => scrollToBottom(), [messages]);
 
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
-
-  // Get AI response
-  const getAIResponse = async (userInput: string): Promise<string> => {
+  // === NEW: Call backend LLM for text messages ===
+  const getLLMResponse = async (userInput: string) => {
     try {
-      // Simulate AI API call - replace with actual API
-      const responses = [
-        "That's a fascinating question! Let me help you with that.",
-        "I understand what you're asking. Here's what I think...",
-        "Great point! Based on my understanding, I'd suggest...",
-        "That's an interesting perspective. Let me elaborate on that topic.",
-        "I'm here to help! Here's my response to your question."
-      ];
-      
-      // Simulate thinking time
-      await new Promise(resolve => setTimeout(resolve, 1000 + Math.random() * 2000));
-      
-      return responses[Math.floor(Math.random() * responses.length)] + 
-             ` You mentioned: "${userInput}". This gives me a good understanding of what you're looking for.`;
+      const res = await fetch(`${API_URL}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: userInput }),
+      });
+      const data = await res.json();
+      return data.assistant || "No response from server.";
     } catch (error) {
-      console.error('Error getting AI response:', error);
-      return "I apologize, but I'm having trouble processing your request right now. Please try again.";
+      console.error("Error getting AI response:", error);
+      return "Sorry, server is unreachable.";
     }
   };
 
-  // Text-to-Speech function
+  // Text-to-Speech
   const speakText = useCallback((text: string) => {
-    if ('speechSynthesis' in window) {
-      // Cancel any ongoing speech
+    if ("speechSynthesis" in window) {
       speechSynthesis.cancel();
-      
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.rate = 0.9;
       utterance.pitch = 1.0;
       utterance.volume = 1.0;
 
-      // Try to get a natural voice
       const voices = speechSynthesis.getVoices();
-      const preferredVoice = voices.find(voice => 
-        voice.lang.startsWith('en') && voice.name.includes('Google')
-      ) || voices.find(voice => voice.lang.startsWith('en'));
-      
-      if (preferredVoice) {
-        utterance.voice = preferredVoice;
-      }
+      const preferredVoice =
+        voices.find(
+          (voice) =>
+            voice.lang.startsWith("en") && voice.name.includes("Google")
+        ) || voices.find((voice) => voice.lang.startsWith("en"));
+
+      if (preferredVoice) utterance.voice = preferredVoice;
 
       utterance.onstart = () => setIsSpeaking(true);
       utterance.onend = () => setIsSpeaking(false);
@@ -159,7 +143,7 @@ const ChatInterface = () => {
     }
   }, []);
 
-  // Process message (from text or voice)
+  // === Process message typed or voice ===
   const processMessage = async (messageText: string) => {
     if (!messageText.trim()) return;
 
@@ -169,28 +153,22 @@ const ChatInterface = () => {
       isUser: true,
       timestamp: new Date(),
     };
-
-    setMessages(prev => [...prev, userMessage]);
+    setMessages((prev) => [...prev, userMessage]);
     setInputValue("");
 
-    // Get AI response
     try {
-      const aiResponseText = await getAIResponse(messageText);
-      const aiResponse: Message = {
+      const aiResponseText = await getLLMResponse(messageText);
+      const aiMessage: Message = {
         id: (Date.now() + 1).toString(),
         content: aiResponseText,
         isUser: false,
         timestamp: new Date(),
       };
-      
-      setMessages(prev => [...prev, aiResponse]);
-      
-      // Speak the response if in voice mode
-      if (isVoiceMode) {
-        speakText(aiResponseText);
-      }
+      setMessages((prev) => [...prev, aiMessage]);
+
+      if (isVoiceMode) speakText(aiResponseText);
     } catch (error) {
-      console.error('Error processing message:', error);
+      console.error(error);
       toast({
         title: "Error",
         description: "Failed to get AI response",
@@ -199,10 +177,7 @@ const ChatInterface = () => {
     }
   };
 
-  const handleSendMessage = () => {
-    processMessage(inputValue);
-  };
-
+  const handleSendMessage = () => processMessage(inputValue);
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -213,9 +188,8 @@ const ChatInterface = () => {
   const toggleVoiceMode = () => {
     const newVoiceMode = !isVoiceMode;
     setIsVoiceMode(newVoiceMode);
-    
+
     if (newVoiceMode) {
-      // Start voice recognition
       if (recognitionRef.current) {
         setRecognitionActive(true);
         setIsListening(true);
@@ -226,7 +200,7 @@ const ChatInterface = () => {
             description: "Listening for your voice...",
           });
         } catch (error) {
-          console.error('Error starting voice recognition:', error);
+          console.error(error);
           setIsListening(false);
           setRecognitionActive(false);
         }
@@ -239,12 +213,9 @@ const ChatInterface = () => {
         setIsVoiceMode(false);
       }
     } else {
-      // Stop voice recognition
       setRecognitionActive(false);
       setIsListening(false);
-      if (recognitionRef.current) {
-        recognitionRef.current.stop();
-      }
+      if (recognitionRef.current) recognitionRef.current.stop();
       if (speechSynthesisRef.current) {
         speechSynthesis.cancel();
         setIsSpeaking(false);
@@ -259,14 +230,15 @@ const ChatInterface = () => {
   return (
     <div className="flex h-screen bg-gradient-chat">
       <div className="flex-1 flex flex-col max-w-4xl mx-auto">
-        {/* Header */}
         <header className="p-6 border-b border-border/50">
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-2xl font-bold bg-gradient-ai bg-clip-text text-transparent">
                 AI Assistant
               </h1>
-              <p className="text-muted-foreground">Your intelligent chat companion</p>
+              <p className="text-muted-foreground">
+                Your intelligent chat companion
+              </p>
             </div>
             <Button
               onClick={toggleVoiceMode}
@@ -284,9 +256,7 @@ const ChatInterface = () => {
         </header>
 
         <div className="flex-1 flex">
-          {/* Chat Area */}
           <div className="flex-1 flex flex-col">
-            {/* Messages */}
             <div className="flex-1 overflow-y-auto p-6 space-y-4">
               {messages.map((message) => (
                 <div
@@ -317,7 +287,6 @@ const ChatInterface = () => {
               <div ref={messagesEndRef} />
             </div>
 
-            {/* Input Area */}
             {!isVoiceMode && (
               <div className="p-6 border-t border-border/50">
                 <div className="flex gap-3">
@@ -340,12 +309,11 @@ const ChatInterface = () => {
             )}
           </div>
 
-          {/* Avatar Panel */}
           {isVoiceMode && (
             <div className="w-80 border-l border-border/50 p-6">
-              <ChatAvatar 
-                isListening={isListening} 
-                isVoiceMode={isVoiceMode} 
+              <ChatAvatar
+                isListening={isListening}
+                isVoiceMode={isVoiceMode}
                 isSpeaking={isSpeaking}
               />
             </div>

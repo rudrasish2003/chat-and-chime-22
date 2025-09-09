@@ -1,163 +1,198 @@
-import { useEffect, useState } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Card } from "@/components/ui/card";
+import { Send, Mic, MicOff } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useToast } from "@/hooks/use-toast";
+import ChatAvatar from "./ChatAvatar";
 
-interface ChatAvatarProps {
-  isListening: boolean;
-  isVoiceMode: boolean;
-  isSpeaking?: boolean;
+declare global {
+  interface Window {
+    SpeechRecognition: any;
+    webkitSpeechRecognition: any;
+    MediaRecorder: any;
+  }
 }
 
-const ChatAvatar = ({ isListening, isVoiceMode, isSpeaking = false }: ChatAvatarProps) => {
-  const [pulseIntensity, setPulseIntensity] = useState(0);
-  const [mouthMovement, setMouthMovement] = useState(0);
+interface Message {
+  id: string;
+  content: string;
+  isUser: boolean;
+  timestamp: Date;
+}
 
-  useEffect(() => {
-    if (isListening || isSpeaking) {
-      const interval = setInterval(() => {
-        setPulseIntensity(Math.random() * 100);
-      }, 200);
-      return () => clearInterval(interval);
-    } else {
-      setPulseIntensity(0);
-    }
-  }, [isListening, isSpeaking]);
+const API_URL = "http://127.0.0.1:8000";
 
-  // Mouth movement animation for speaking
-  useEffect(() => {
-    if (isSpeaking) {
-      const interval = setInterval(() => {
-        setMouthMovement(Math.random() * 40 + 10);
-      }, 150);
-      return () => clearInterval(interval);
-    } else {
-      setMouthMovement(0);
+const ChatInterface = () => {
+  const [messages, setMessages] = useState<Message[]>([
+    { id: "1", content: "Hello! I'm your AI assistant. How can I help you today?", isUser: false, timestamp: new Date() }
+  ]);
+  const [inputValue, setInputValue] = useState("");
+  const [isVoiceMode, setIsVoiceMode] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+
+  const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const { toast } = useToast();
+
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const scrollToBottom = () => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  useEffect(() => scrollToBottom(), [messages]);
+
+  // === Text / Chat API ===
+  const getLLMResponse = async (userInput: string) => {
+    try {
+      const res = await fetch(`${API_URL}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: userInput }),
+      });
+      const data = await res.json();
+      return data.assistant || "No response from server.";
+    } catch (error) {
+      console.error(error);
+      return "Server not reachable.";
     }
-  }, [isSpeaking]);
+  };
+
+  const speakAudioBase64 = async (base64: string) => {
+    const audio = new Audio(`data:audio/mp3;base64,${base64}`);
+    setIsSpeaking(true);
+    audio.play();
+    audio.onended = () => setIsSpeaking(false);
+  };
+
+  // === Handle voice input through /voice endpoint ===
+  const startVoiceRecording = async () => {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      toast({ title: "Error", description: "Microphone not supported", variant: "destructive" });
+      return;
+    }
+
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const recorder = new MediaRecorder(stream);
+    setMediaRecorder(recorder);
+    audioChunksRef.current = [];
+
+    recorder.ondataavailable = (e: BlobEvent) => audioChunksRef.current.push(e.data);
+
+    recorder.onstop = async () => {
+      const audioBlob = new Blob(audioChunksRef.current, { type: "audio/wav" });
+      const formData = new FormData();
+      formData.append("file", audioBlob, "voice.wav");
+
+      try {
+        const res = await fetch(`${API_URL}/voice`, { method: "POST", body: formData });
+        const data = await res.json();
+
+        // Update chat messages
+        const userMessage: Message = { id: Date.now().toString(), content: data.transcription, isUser: true, timestamp: new Date() };
+        const assistantMessage: Message = { id: (Date.now() + 1).toString(), content: data.assistant, isUser: false, timestamp: new Date() };
+
+        setMessages(prev => [...prev, userMessage, assistantMessage]);
+
+        // Play assistant TTS audio
+        if (data.audio_base64) await speakAudioBase64(data.audio_base64);
+
+      } catch (error) {
+        console.error(error);
+        toast({ title: "Error", description: "Failed to process voice", variant: "destructive" });
+      }
+    };
+
+    recorder.start();
+    setIsListening(true);
+    toast({ title: "Listening...", description: "Speak now" });
+  };
+
+  const stopVoiceRecording = () => {
+    if (mediaRecorder && mediaRecorder.state !== "inactive") {
+      mediaRecorder.stop();
+      setIsListening(false);
+    }
+  };
+
+  const toggleVoiceMode = () => {
+    const newMode = !isVoiceMode;
+    setIsVoiceMode(newMode);
+
+    if (!newMode) stopVoiceRecording();
+  };
+
+  const handleSendMessage = async () => {
+    if (!inputValue.trim()) return;
+    const userMessage: Message = { id: Date.now().toString(), content: inputValue, isUser: true, timestamp: new Date() };
+    setMessages(prev => [...prev, userMessage]);
+    setInputValue("");
+
+    const aiResponse = await getLLMResponse(inputValue);
+    const assistantMessage: Message = { id: (Date.now() + 1).toString(), content: aiResponse, isUser: false, timestamp: new Date() };
+    setMessages(prev => [...prev, assistantMessage]);
+  };
 
   return (
-    <div className="flex flex-col items-center justify-center h-full">
-      <div className="relative">
-        {/* Outer pulse rings */}
-        <div
-          className={cn(
-            "absolute inset-0 rounded-full border-2 border-ai-primary/30 transition-all duration-500",
-            isListening && "animate-ping scale-150"
-          )}
-        />
-        <div
-          className={cn(
-            "absolute inset-0 rounded-full border-2 border-ai-secondary/30 transition-all duration-700 delay-100",
-            isListening && "animate-ping scale-125"
-          )}
-        />
-        
-        {/* Main avatar */}
-        <div
-          className={cn(
-            "w-32 h-32 rounded-full bg-gradient-avatar shadow-avatar transition-all duration-300 flex items-center justify-center",
-            isListening && "scale-110 shadow-lg"
-          )}
-          style={{
-            boxShadow: isListening 
-              ? `0 0 ${20 + pulseIntensity / 2}px hsl(var(--ai-primary) / 0.6)` 
-              : "var(--shadow-avatar)"
-          }}
-        >
-          {/* Avatar face */}
-          <div className="relative w-full h-full rounded-full overflow-hidden">
-            {/* Eyes */}
-            <div className="absolute top-8 left-1/2 transform -translate-x-1/2 flex space-x-3">
-              <div 
-                className={cn(
-                  "w-3 h-3 bg-background rounded-full transition-all duration-300",
-                  isListening && "animate-pulse"
-                )}
-              />
-              <div 
-                className={cn(
-                  "w-3 h-3 bg-background rounded-full transition-all duration-300",
-                  isListening && "animate-pulse"
-                )}
-              />
-            </div>
-            
-            {/* Mouth - animated based on voice activity */}
-            <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2">
-              <div 
-                className={cn(
-                  "w-8 h-4 border-2 border-background rounded-b-full transition-all duration-200",
-                  (isListening || isSpeaking) && "animate-bounce"
-                )}
-                style={{
-                  transform: isSpeaking
-                    ? `scaleY(${0.3 + mouthMovement / 100}) scaleX(${1 + mouthMovement / 100})`
-                    : isListening 
-                    ? `scaleY(${0.5 + pulseIntensity / 200})` 
-                    : "scaleY(0.5)"
-                }}
-              />
-            </div>
-            
-            {/* Listening indicator waves */}
-            {isListening && (
-              <div className="absolute inset-0 flex items-center justify-center">
-                <div className="flex space-x-1">
-                  {[...Array(5)].map((_, i) => (
-                    <div
-                      key={i}
-                      className="w-1 bg-background/80 rounded-full animate-pulse"
-                      style={{
-                        height: `${10 + (pulseIntensity / 10) * Math.sin(Date.now() / 200 + i)}px`,
-                        animationDelay: `${i * 100}ms`
-                      }}
-                    />
-                  ))}
+    <div className="flex h-screen bg-gradient-chat">
+      <div className="flex-1 flex flex-col max-w-4xl mx-auto">
+        {/* Header */}
+        <header className="p-6 border-b border-border/50 flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold bg-gradient-ai bg-clip-text text-transparent">AI Assistant</h1>
+            <p className="text-muted-foreground">Your intelligent chat companion</p>
+          </div>
+          <Button
+            onClick={toggleVoiceMode}
+            variant={isVoiceMode ? "default" : "outline"}
+            size="lg"
+            className={cn("transition-all duration-300", isVoiceMode && "bg-gradient-ai shadow-ai")}
+          >
+            {isVoiceMode ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+            {isVoiceMode ? "Exit Voice" : "Voice Mode"}
+          </Button>
+        </header>
+
+        <div className="flex-1 flex">
+          {/* Chat Area */}
+          <div className="flex-1 flex flex-col">
+            <div className="flex-1 overflow-y-auto p-6 space-y-4">
+              {messages.map(msg => (
+                <div key={msg.id} className={cn("flex", msg.isUser ? "justify-end" : "justify-start")}>
+                  <Card className={cn("max-w-[80%] p-4", msg.isUser ? "bg-gradient-ai text-primary-foreground shadow-ai" : "bg-card border-border/50 shadow-chat")}>
+                    <p className="text-sm leading-relaxed">{msg.content}</p>
+                    <p className="text-xs opacity-70 mt-2">{msg.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</p>
+                  </Card>
                 </div>
+              ))}
+              <div ref={messagesEndRef} />
+            </div>
+
+            {!isVoiceMode && (
+              <div className="p-6 border-t border-border/50 flex gap-3">
+                <Input value={inputValue} onChange={(e) => setInputValue(e.target.value)} placeholder="Type your message..." className="flex-1 bg-secondary/50 border-border/50 focus:border-ai-primary transition-colors" />
+                <Button onClick={handleSendMessage} disabled={!inputValue.trim()} className="bg-gradient-ai shadow-ai hover:shadow-lg transition-all duration-300"><Send className="w-4 h-4" /></Button>
               </div>
             )}
           </div>
-        </div>
-      </div>
 
-      {/* Status text */}
-      <div className="mt-6 text-center">
-        <h3 className="text-lg font-semibold bg-gradient-ai bg-clip-text text-transparent">
-          AI Assistant
-        </h3>
-        <p className="text-sm text-muted-foreground mt-1">
-          {isSpeaking ? "Speaking..." : isListening ? "Listening..." : "Ready to chat"}
-        </p>
-        
-        {/* Voice activity indicator */}
-        {(isListening || isSpeaking) && (
-          <div className="mt-4 flex justify-center space-x-1">
-            {[...Array(3)].map((_, i) => (
-              <div
-                key={i}
-                className={cn(
-                  "w-2 h-2 rounded-full animate-bounce",
-                  isSpeaking ? "bg-ai-secondary" : "bg-ai-primary"
+          {/* Avatar Panel */}
+          {isVoiceMode && (
+            <div className="w-80 border-l border-border/50 p-6 flex flex-col items-center justify-center">
+              <ChatAvatar isListening={isListening} isVoiceMode={isVoiceMode} isSpeaking={isSpeaking} />
+              <div className="mt-6">
+                {isListening ? (
+                  <Button onClick={stopVoiceRecording} className="bg-red-500 hover:bg-red-600 text-white">Stop</Button>
+                ) : (
+                  <Button onClick={startVoiceRecording} className="bg-green-500 hover:bg-green-600 text-white">Talk</Button>
                 )}
-                style={{ animationDelay: `${i * 200}ms` }}
-              />
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Instructions */}
-      <div className="mt-8 p-4 bg-card/50 rounded-lg border border-border/50">
-        <p className="text-xs text-muted-foreground text-center">
-          {isSpeaking 
-            ? "I'm responding to your message..."
-            : isListening 
-            ? "Speak naturally - I'm listening to your voice"
-            : "Click the microphone to start voice conversation"
-          }
-        </p>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
 };
 
-export default ChatAvatar;
+export default ChatInterface;
