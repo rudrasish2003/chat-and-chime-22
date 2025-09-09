@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import ChatAvatar from "./ChatAvatar";
 
+// TypeScript declarations for Speech APIs
 declare global {
   interface Window {
     SpeechRecognition: any;
@@ -21,7 +22,7 @@ interface Message {
   timestamp: Date;
 }
 
-const API_URL = "http://127.0.0.1:8000";
+const API_URL = "http://127.0.0.1:8000"; // FastAPI backend
 
 const ChatInterface = () => {
   const [messages, setMessages] = useState<Message[]>([
@@ -49,6 +50,7 @@ const ChatInterface = () => {
       const SpeechRecognitionAPI =
         window.SpeechRecognition || window.webkitSpeechRecognition;
       recognitionRef.current = new SpeechRecognitionAPI();
+
       if (recognitionRef.current) {
         recognitionRef.current.continuous = true;
         recognitionRef.current.interimResults = false;
@@ -79,6 +81,7 @@ const ChatInterface = () => {
 
         recognitionRef.current.onend = () => {
           if (recognitionActive && isVoiceMode) {
+            // Restart recognition if still in voice mode
             setTimeout(() => {
               if (recognitionRef.current && recognitionActive && isVoiceMode) {
                 recognitionRef.current.start();
@@ -90,18 +93,25 @@ const ChatInterface = () => {
     }
 
     return () => {
-      if (recognitionRef.current) recognitionRef.current.stop();
-      if (speechSynthesisRef.current) speechSynthesis.cancel();
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
+      if (speechSynthesisRef.current) {
+        speechSynthesis.cancel();
+      }
     };
   }, [recognitionActive, isVoiceMode]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
-  useEffect(() => scrollToBottom(), [messages]);
 
-  // === NEW: Call backend LLM for text messages ===
-  const getLLMResponse = async (userInput: string) => {
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
+  // Call FastAPI /chat
+  const getAIResponse = async (userInput: string): Promise<string> => {
     try {
       const res = await fetch(`${API_URL}/chat`, {
         method: "POST",
@@ -112,14 +122,15 @@ const ChatInterface = () => {
       return data.assistant || "No response from server.";
     } catch (error) {
       console.error("Error getting AI response:", error);
-      return "Sorry, server is unreachable.";
+      return "Sorry, I'm having trouble connecting to the server.";
     }
   };
 
   // Text-to-Speech
   const speakText = useCallback((text: string) => {
     if ("speechSynthesis" in window) {
-      speechSynthesis.cancel();
+      speechSynthesis.cancel(); // cancel ongoing
+
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.rate = 0.9;
       utterance.pitch = 1.0;
@@ -132,7 +143,9 @@ const ChatInterface = () => {
             voice.lang.startsWith("en") && voice.name.includes("Google")
         ) || voices.find((voice) => voice.lang.startsWith("en"));
 
-      if (preferredVoice) utterance.voice = preferredVoice;
+      if (preferredVoice) {
+        utterance.voice = preferredVoice;
+      }
 
       utterance.onstart = () => setIsSpeaking(true);
       utterance.onend = () => setIsSpeaking(false);
@@ -143,7 +156,7 @@ const ChatInterface = () => {
     }
   }, []);
 
-  // === Process message typed or voice ===
+  // Process a message (typed or voice)
   const processMessage = async (messageText: string) => {
     if (!messageText.trim()) return;
 
@@ -153,22 +166,26 @@ const ChatInterface = () => {
       isUser: true,
       timestamp: new Date(),
     };
+
     setMessages((prev) => [...prev, userMessage]);
     setInputValue("");
 
     try {
-      const aiResponseText = await getLLMResponse(messageText);
-      const aiMessage: Message = {
+      const aiResponseText = await getAIResponse(messageText);
+      const aiResponse: Message = {
         id: (Date.now() + 1).toString(),
         content: aiResponseText,
         isUser: false,
         timestamp: new Date(),
       };
-      setMessages((prev) => [...prev, aiMessage]);
 
-      if (isVoiceMode) speakText(aiResponseText);
+      setMessages((prev) => [...prev, aiResponse]);
+
+      if (isVoiceMode) {
+        speakText(aiResponseText);
+      }
     } catch (error) {
-      console.error(error);
+      console.error("Error processing message:", error);
       toast({
         title: "Error",
         description: "Failed to get AI response",
@@ -177,7 +194,10 @@ const ChatInterface = () => {
     }
   };
 
-  const handleSendMessage = () => processMessage(inputValue);
+  const handleSendMessage = () => {
+    processMessage(inputValue);
+  };
+
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -200,7 +220,7 @@ const ChatInterface = () => {
             description: "Listening for your voice...",
           });
         } catch (error) {
-          console.error(error);
+          console.error("Error starting voice recognition:", error);
           setIsListening(false);
           setRecognitionActive(false);
         }
@@ -230,6 +250,7 @@ const ChatInterface = () => {
   return (
     <div className="flex h-screen bg-gradient-chat">
       <div className="flex-1 flex flex-col max-w-4xl mx-auto">
+        {/* Header */}
         <header className="p-6 border-b border-border/50">
           <div className="flex items-center justify-between">
             <div>
@@ -249,14 +270,20 @@ const ChatInterface = () => {
                 isVoiceMode && "bg-gradient-ai shadow-ai"
               )}
             >
-              {isVoiceMode ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+              {isVoiceMode ? (
+                <MicOff className="w-5 h-5" />
+              ) : (
+                <Mic className="w-5 h-5" />
+              )}
               {isVoiceMode ? "Exit Voice" : "Voice Mode"}
             </Button>
           </div>
         </header>
 
         <div className="flex-1 flex">
+          {/* Chat Area */}
           <div className="flex-1 flex flex-col">
+            {/* Messages */}
             <div className="flex-1 overflow-y-auto p-6 space-y-4">
               {messages.map((message) => (
                 <div
@@ -287,6 +314,7 @@ const ChatInterface = () => {
               <div ref={messagesEndRef} />
             </div>
 
+            {/* Input Area */}
             {!isVoiceMode && (
               <div className="p-6 border-t border-border/50">
                 <div className="flex gap-3">
@@ -309,6 +337,7 @@ const ChatInterface = () => {
             )}
           </div>
 
+          {/* Avatar Panel (only animation, no chat) */}
           {isVoiceMode && (
             <div className="w-80 border-l border-border/50 p-6">
               <ChatAvatar
